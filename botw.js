@@ -3,7 +3,6 @@ import makeWASocket, {
   fetchLatestBaileysVersion
 } from "@whiskeysockets/baileys";
 import pino from "pino";
-import readline from "node:readline/promises";
 
 const BB_KEY = process.env.BB_KEY;
 if (!BB_KEY) throw new Error("GitHub Secret BB_KEY belum diatur.");
@@ -14,7 +13,7 @@ const FIREBASE = {
   projectId: "wers-app-d921c"
 };
 
-const BOT_NUMBER = "628877028554";
+const BOT_NUMBER = "628877028554".replace(/\D/g, "");
 const SESSION_PATH = "Baileys/sessions/main";
 const logger = pino({ level: "silent" });
 
@@ -213,11 +212,21 @@ async function bypass(url) {
 
 let reconnectTimer;
 let stopping = false;
-let pairingRequested = false;
 
 async function startBot() {
   const { state, saveCreds } = await useFirebaseAuthState();
   const { version } = await fetchLatestBaileysVersion();
+  let pairingRequested = false;
+  let pairingInProgress = false;
+
+  if (!state.creds.registered) {
+    if (!/^\\d{8,15}$/.test(BOT_NUMBER)) {
+      throw new Error("BOT_NUMBER harus berupa nomor internasional tanpa tanda +, spasi, atau strip.");
+    }
+    console.log(`Session belum tertaut. Menunggu koneksi WhatsApp sebelum meminta pairing code untuk ${BOT_NUMBER}.`);
+  } else {
+    console.log("Session WhatsApp ditemukan di Firebase. Mencoba memulihkan koneksi tanpa pairing.");
+  }
 
   const sock = makeWASocket({
     version,
@@ -226,7 +235,9 @@ async function startBot() {
     printQRInTerminal: false,
     browser: ["WA-Bypass-Bot", "Chrome", "1.0.0"],
     markOnlineOnConnect: false,
-    syncFullHistory: false
+    syncFullHistory: false,
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 60_000
   });
 
   sock.ev.on("creds.update", () => {
@@ -234,22 +245,32 @@ async function startBot() {
   });
 
   sock.ev.on("connection.update", async update => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
 
-    if (connection === "connecting" && !state.creds.registered && !pairingRequested) {
-      pairingRequested = true;
+    // Request the pairing code only after Baileys has produced its pairing/QR
+    // challenge. Calling it immediately on "connecting" can be too early.
+    if (qr && !state.creds.registered && !pairingRequested && !pairingInProgress) {
+      pairingInProgress = true;
       try {
-        await sleep(2500);
         const code = await sock.requestPairingCode(BOT_NUMBER);
+        pairingRequested = true;
+        console.log("\\n========== WHATSAPP PAIRING ==========");
         console.log(`PAIRING CODE: ${code}`);
-        console.log(`Masukkan di WhatsApp nomor ${BOT_NUMBER}: Perangkat tertaut > Tautkan dengan nomor telepon.`);
+        console.log(`Nomor yang diminta: ${BOT_NUMBER}`);
+        console.log("Masukkan 8 karakter kode tersebut di WhatsApp > Perangkat tertaut > Tautkan dengan nomor telepon.");
+        console.log("Jangan masukkan tanda strip/spasi tambahan dan gunakan kode dari run Actions yang sedang aktif.");
+        console.log("======================================\\n");
       } catch (error) {
-        pairingRequested = false;
-        console.error("Gagal membuat pairing code:", error.message);
+        console.error("Gagal membuat pairing code:", error?.message || error);
+        console.error("Pastikan nomor benar, tunggu sebentar jika terlalu banyak percobaan, lalu jalankan ulang workflow.");
+      } finally {
+        pairingInProgress = false;
       }
     }
 
-    if (connection === "open") console.log("WhatsApp terhubung; session disimpan di Firebase RTDB.");
+    if (connection === "open") {
+      console.log("WhatsApp terhubung; session disimpan di Firebase RTDB.");
+    }
 
     if (connection === "close" && !stopping) {
       const status = lastDisconnect?.error?.output?.statusCode;
@@ -260,7 +281,6 @@ async function startBot() {
       }
       clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(() => {
-        pairingRequested = false;
         startBot().catch(err => console.error("Reconnect gagal:", err));
       }, 5000);
     }
