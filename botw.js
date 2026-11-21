@@ -116,8 +116,19 @@ const serialize = value => JSON.stringify(value, BufferJSON.replacer);
 const deserialize = value => JSON.parse(value, BufferJSON.reviver);
 
 async function useFirebaseAuthState() {
+  // Always read the canonical RTDB node at process startup; no local auth
+  // directory or runner cache is used by this bot.
   const saved = await dbGet(sessionBase);
-  const creds = saved?.creds ? deserialize(saved.creds) : initAuthCreds();
+  const hasSavedCreds = Boolean(saved && typeof saved.creds === "string" && saved.creds.length > 0);
+  const creds = hasSavedCreds ? deserialize(saved.creds) : initAuthCreds();
+
+  console.log(`[Firebase] Session path: ${sessionBase}`);
+  console.log(`[Firebase] RTDB node exists: ${saved !== null && saved !== undefined}`);
+  console.log(`[Firebase] Credentials exist: ${hasSavedCreds}`);
+  console.log(`[Firebase] WhatsApp registered: ${Boolean(creds.registered)}`);
+  if (!hasSavedCreds) {
+    console.log("[Firebase] No saved credentials found. A new pairing is required.");
+  }
 
   const keys = {
     async get(type, ids) {
@@ -142,7 +153,10 @@ async function useFirebaseAuthState() {
 
   return {
     state: { creds, keys },
-    saveCreds: async () => dbPut(`${sessionBase}/creds`, serialize(creds))
+    saveCreds: async () => {
+      await dbPut(`${sessionBase}/creds`, serialize(creds));
+      console.log(`[Firebase] Credentials saved to ${sessionBase}/creds`);
+    }
   };
 }
 
