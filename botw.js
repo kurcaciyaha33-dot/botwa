@@ -220,7 +220,7 @@ async function startBot() {
   let pairingInProgress = false;
 
   if (!state.creds.registered) {
-    if (!/^\\d{8,15}$/.test(BOT_NUMBER)) {
+    if (!/^\d{8,15}$/.test(BOT_NUMBER)) {
       throw new Error("BOT_NUMBER harus berupa nomor internasional tanpa tanda +, spasi, atau strip.");
     }
     console.log(`Session belum tertaut. Menunggu koneksi WhatsApp sebelum meminta pairing code untuk ${BOT_NUMBER}.`);
