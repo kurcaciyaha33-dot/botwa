@@ -1,0 +1,58 @@
+name: WA Bypass Bot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: wa-bypass-bot
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run bot and schedule next workflow
+        env:
+          BB_KEY: ${{ secrets.BB_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm start &
+          BOT_PID=$!
+
+          cleanup() {
+            if kill -0 "$BOT_PID" 2>/dev/null; then
+              kill "$BOT_PID" 2>/dev/null || true
+              wait "$BOT_PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          # 05:58:59 after bot start, leaving a small margin before 6h timeout.
+          sleep 21539
+
+          gh workflow run bot.yml --repo "$GH_REPO" --ref "$GH_REF"
+          echo "Next workflow requested."
+
+          # Keep this run alive until GitHub starts the next run and concurrency cancels it.
+          wait "$BOT_PID"
